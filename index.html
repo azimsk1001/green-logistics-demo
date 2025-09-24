@@ -90,22 +90,17 @@
   </div>
 
   <script>
-    const NGROK_URL = 'https://9b724575c6ea.ngrok-free.app/optimize-route'; // Replace with your backend URL when ready
+    const NGROK_URL = 'https://9b724575c6ea.ngrok-free.app/optimize-route'; // Replace with backend URL later
     const NOMINATIM_URL = 'https://nominatim.openstreetmap.org/search';
     const OSRM_URL = 'https://router.project-osrm.org/route/v1/driving';
     let map, routeLayer, origin = null, originMarker = null, destinations = [], maxDests = 5;
 
-    // Initialize map when page loads
-    window.addEventListener('load', function() {
-      initMap();
-    });
+    window.addEventListener('load', initMap);
 
     function initMap() {
       try {
-        if (typeof L === 'undefined') {
-          throw new Error('Leaflet not loaded - check internet or CDN block.');
-        }
-        map = L.map('map').setView([3.139, 101.687], 5); // Malaysia center
+        if (typeof L === 'undefined') throw new Error('Leaflet not loaded');
+        map = L.map('map').setView([3.139, 101.687], 5);
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
           attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
         }).addTo(map);
@@ -115,44 +110,26 @@
       } catch (err) {
         console.error('Map init error:', err);
         document.getElementById('loadingMap').style.display = 'none';
-        const mapError = document.getElementById('mapError');
-        mapError.innerHTML = `Map failed to load: ${err.message}<br>Check console (F12). Try incognito or different browser.`;
-        mapError.style.display = 'block';
+        document.getElementById('mapError').innerHTML = `Map Error: ${err.message}. Check console (F12).`;
+        document.getElementById('mapError').style.display = 'block';
       }
     }
 
     function wireUI() {
-      // Origin input
       const originInput = document.getElementById('originInput');
       const originSugg = document.getElementById('originSuggestions');
-      originInput.addEventListener('input', debounce(function() {
-        searchNominatim(originInput.value).then(suggestions => {
-          showSuggestions(originInput, originSugg, suggestions, function(place) {
-            selectPlace(place, true);
-          });
-        });
-      }, 300));
-      originInput.addEventListener('focus', function() {
-        if (originInput.value.length >= 2) {
-          originInput.dispatchEvent(new Event('input'));
-        }
-      });
-      originSugg.addEventListener('click', function(e) {
-        e.stopPropagation();
-      });
+      originInput.addEventListener('input', debounce(() => searchNominatim(originInput.value).then(list => showSuggestions(originInput, originSugg, list, place => selectPlace(place, true))), 300));
+      originInput.addEventListener('focus', () => originInput.dispatchEvent(new Event('input')));
+      originSugg.addEventListener('click', e => e.stopPropagation());
 
-      // Global click to hide suggestions
-      document.addEventListener('click', function() {
+      document.addEventListener('click', () => {
         originSugg.style.display = 'none';
-        destinations.forEach(function(dest) {
-          dest.suggEl.style.display = 'none';
-        });
+        destinations.forEach(d => d.suggEl.style.display = 'none');
       });
 
-      // Add destination button
-      document.getElementById('addDest').addEventListener('click', function() {
+      document.getElementById('addDest').addEventListener('click', () => {
         if (destinations.length >= maxDests) {
-          showError('Maximum 5 destinations allowed.');
+          showError('Max 5 destinations');
           return;
         }
         const id = destinations.length;
@@ -170,76 +147,51 @@
         const suggEl = box.querySelector('.suggestions');
         const selectedEl = box.querySelector('.small');
         const removeBtn = box.querySelector('.remove');
-        const destObj = { id: id, inputEl: inputEl, suggEl: suggEl, selectedEl: selectedEl, place: null, marker: null };
-
-        removeBtn.addEventListener('click', function() {
-          if (destObj.marker) {
-            map.removeLayer(destObj.marker);
-          }
+        const destObj = {id, inputEl, suggEl, selectedEl, place: null, marker: null};
+        removeBtn.addEventListener('click', () => {
+          if (destObj.marker) map.removeLayer(destObj.marker);
           box.remove();
           destinations.splice(id, 1);
           updateCounts();
         });
-
-        inputEl.addEventListener('input', debounce(function() {
-          searchNominatim(inputEl.value).then(suggestions => {
-            showSuggestions(inputEl, suggEl, suggestions, function(place) {
-              selectPlace(place, false, destObj);
-            });
-          });
-        }, 300));
-        inputEl.addEventListener('focus', function() {
-          if (inputEl.value.length >= 2) {
-            inputEl.dispatchEvent(new Event('input'));
-          }
-        });
-        suggEl.addEventListener('click', function(e) {
-          e.stopPropagation();
-        });
-
+        inputEl.addEventListener('input', debounce(() => searchNominatim(inputEl.value).then(list => showSuggestions(inputEl, suggEl, list, place => selectPlace(place, false, destObj))), 300));
+        inputEl.addEventListener('focus', () => inputEl.dispatchEvent(new Event('input')));
+        suggEl.addEventListener('click', e => e.stopPropagation());
         destinations.push(destObj);
         document.getElementById('destContainer').appendChild(box);
         updateCounts();
       });
 
-      // Optimize button
       document.getElementById('optimizeBtn').addEventListener('click', optimizeRoute);
     }
 
-    // Debounce utility
     function debounce(func, wait) {
       let timeout;
-      return function executedFunction(...args) {
-        const later = () => {
-          clearTimeout(timeout);
-          func(...args);
-        };
+      return function(...args) {
         clearTimeout(timeout);
-        timeout = setTimeout(later, wait);
+        timeout = setTimeout(() => func.apply(this, args), wait);
       };
     }
 
     function showError(msg) {
-      const errorBox = document.getElementById('errorBox');
-      errorBox.textContent = msg || '';
-      errorBox.style.display = msg ? 'block' : 'none';
+      const box = document.getElementById('errorBox');
+      box.textContent = msg || '';
+      box.style.display = msg ? 'block' : 'none';
     }
 
     function updateCounts() {
-      const validCount = destinations.filter(d => d.place).length;
-      document.getElementById('validCount').textContent = validCount;
+      const valid = destinations.filter(d => d.place).length;
+      document.getElementById('validCount').textContent = valid;
       document.getElementById('totalCount').textContent = destinations.length;
-      document.getElementById('optimizeBtn').disabled = !origin || validCount === 0;
+      document.getElementById('optimizeBtn').disabled = !origin || valid === 0;
     }
 
     async function searchNominatim(query) {
       if (!query || query.length < 2) return [];
       const url = `${NOMINATIM_URL}?q=${encodeURIComponent(query)}&format=json&limit=5&addressdetails=1&countrycodes=my,sg,id,th,ph,vn`;
       try {
-        const response = await fetch(url, {
-          headers: { 'User -Agent': 'GreenLogisticsApp/1.0' }
-        });
-        if (!response.ok) throw new Error(`Search API error: ${response.status}`);
+        const response = await fetch(url, { headers: { 'User -Agent': 'GreenLogisticsApp/1.0' } });
+        if (!response.ok) throw new Error('Search failed');
         const data = await response.json();
         return data.map(item => ({
           name: item.display_name.split(',')[0],
@@ -249,18 +201,17 @@
         }));
       } catch (err) {
         console.error('Search error:', err);
-        showError('Location search failed. Check connection.');
         return [];
       }
     }
 
-    function showSuggestions(inputEl, suggEl, suggestions, onSelect) {
+    function showSuggestions(inputEl, suggEl, list, onSelect) {
       suggEl.innerHTML = '';
-      if (suggestions.length === 0) {
+      if (!list.length) {
         suggEl.style.display = 'none';
         return;
       }
-      suggestions.forEach(place => {
+      list.forEach(place => {
         const div = document.createElement('div');
         div.className = 'suggestion';
         div.textContent = place.fullName;
@@ -279,9 +230,7 @@
         origin = place;
         document.getElementById('originInput').value = place.fullName;
         document.getElementById('originSelected').textContent = `Selected: ${place.name}`;
-        if (originMarker) {
-          map.removeLayer(originMarker);
-        }
+        if (originMarker) map.removeLayer(originMarker);
         originMarker = L.marker([place.lat, place.lon], {
           icon: L.icon({
             iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-red.png',
@@ -294,15 +243,4 @@
         destObj.place = place;
         destObj.inputEl.value = place.fullName;
         destObj.selectedEl.textContent = `Selected: ${place.name}`;
-        if (destObj.marker) {
-          map.removeLayer(destObj.marker);
-        }
-        destObj.marker = L.marker([place.lat, place.lon], {
-          icon: L.icon({
-            iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-green.png',
-            iconSize: [25, 41],
-            iconAnchor: [12, 41]
-          })
-        }).addTo(map).bindPopup(place.fullName);
-        if (origin) {
-          map.setView([origin.lat, origin.lon], 8); // Zoom to show
+        if (destObj.marker) map.removeLayer
