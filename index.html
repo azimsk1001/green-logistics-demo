@@ -4,12 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Green Logistics Planner - OSM Edition</title>
-  <!-- Primary CDN -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css" />
   <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
-  <!-- Fallback CDN if primary fails -->
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" disabled />
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" disabled></script>
   <style>
     body { margin: 0; font-family: system-ui, Arial, sans-serif; }
     .app { display: flex; height: 100vh; }
@@ -43,11 +39,11 @@
     .map-error { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); text-align: center; color: #991b1b; background: #fee2e2; padding: 20px; border-radius: 8px; max-width: 80%; z-index: 1000; }
   </style>
 </head>
-<body onload="initMap()">
+<body>
   <div class="app">
     <div class="left">
       <h1>Green Logistics Planner</h1>
-      <p class="small">OSM Edition (GitHub Pages Live)</p>
+      <p class="small">OSM Edition (Live on GitHub Pages)</p>
       <div class="row">
         <label>Starting Point (Origin)</label>
         <div class="input-wrapper">
@@ -94,43 +90,56 @@
   </div>
 
   <script>
-    const NGROK_URL = 'https://9b724575c6ea.ngrok-free.app/optimize-route'; // Update to your backend URL
+    const NGROK_URL = 'https://9b724575c6ea.ngrok-free.app/optimize-route'; // Update to backend when ready
     const NOMINATIM_URL = 'https://nominatim.openstreetmap.org/search';
     const OSRM_URL = 'https://router.project-osrm.org/route/v1/driving';
     let map, routeLayer, origin = null, originMarker = null, destinations = [], maxDests = 5;
 
+    // Initialize map on load
+    window.addEventListener('load', initMap);
+
     function initMap() {
       try {
-        if (typeof L === 'undefined') {
-          // Try fallback CDN
-          document.querySelector('link[rel="stylesheet"][disabled]').disabled = false;
-          document.querySelector('script[disabled]').disabled = false;
-          throw new Error('Primary Leaflet failed - trying fallback');
-        }
-        map = L.map('map').setView([3.139, 101.687], 5); // Malaysia
+        if (typeof L === 'undefined') throw new Error('Leaflet library not loaded. Check internet/CDN.');
+        map = L.map('map').setView([3.139, 101.687], 5); // Center on Malaysia
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
           attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
         }).addTo(map);
         document.getElementById('loadingMap').style.display = 'none';
-        console.log('OSM Map loaded successfully!');
+        console.log('Map initialized successfully!');
         wireUI();
       } catch (err) {
-        console.error('Map init error:', err);
+        console.error('Map initialization error:', err);
         document.getElementById('loadingMap').style.display = 'none';
-        document.getElementById('mapError').innerHTML = `Map Error: ${err.message}<br>Check console (F12) for details. Try incognito or different browser.`;
+        document.getElementById('mapError').innerHTML = `Error loading map: ${err.message}<br>Open console (F12) for details. Try refreshing or incognito mode.`;
         document.getElementById('mapError').style.display = 'block';
       }
     }
 
     function wireUI() {
+      // Origin search
       const originInput = document.getElementById('originInput');
       const originSugg = document.getElementById('originSuggestions');
-      originInput.oninput = debounce(() => searchNominatim(originInput.value).then(list => showSuggestions(originInput, originSugg, list, (place) => selectPlace(place, true))), 300);
-      originInput.onfocus = () => originInput.oninput();
-      document.body.onclick = () => { originSugg.style.display = 'none'; destinations.forEach(d => d.suggEl.style.display = 'none'); };
+      originInput.addEventListener('input', debounce(() => {
+        searchNominatim(originInput.value).then(suggestions => {
+          showSuggestions(originInput, originSugg, suggestions, place => selectPlace(place, true));
+        });
+      }, 300));
+      originInput.addEventListener('focus', () => originInput.dispatchEvent(new Event('input')));
+      originSugg.addEventListener('click', e => e.stopPropagation());
 
-      document.getElementById('addDest').onclick = () => {
-        if (destinations.length >= maxDests) { showError('Max 5 destinations'); return; }
+      // Hide suggestions on outside click
+      document.addEventListener('click', () => {
+        originSugg.style.display = 'none';
+        destinations.forEach(dest => dest.suggEl.style.display = 'none');
+      });
+
+      // Add destination
+      document.getElementById('addDest').addEventListener('click', () => {
+        if (destinations.length >= maxDests) {
+          showError('Maximum 5 destinations allowed.');
+          return;
+        }
         const id = destinations.length;
         const box = document.createElement('div');
         box.className = 'dest-box';
@@ -146,55 +155,62 @@
         const suggEl = box.querySelector('.suggestions');
         const selectedEl = box.querySelector('.small');
         const removeBtn = box.querySelector('.remove');
-        removeBtn.onclick = () => { 
-          if (destObj.marker) map.removeLayer(destObj.marker); 
-          box.remove(); 
-          destinations.splice(id, 1); 
-          updateCounts(); 
-        };
-        inputEl.oninput = debounce(() => searchNominatim(inputEl.value).then(list => showSuggestions(inputEl, suggEl, list, (place) => selectPlace(place, false, {id, inputEl, suggEl, selectedEl, place: null, marker: null}))), 300);
-        inputEl.onfocus = () => inputEl.oninput();
-        suggEl.onclick = (e) => e.stopPropagation();
-        destinations.push({id, inputEl, suggEl, selectedEl, place: null, marker: null});
+        const destObj = { id, inputEl, suggEl, selectedEl, place: null, marker: null };
+
+        removeBtn.addEventListener('click', () => {
+          if (destObj.marker) map.removeLayer(destObj.marker);
+          box.remove();
+          destinations.splice(id, 1);
+          updateCounts();
+        });
+
+        inputEl.addEventListener('input', debounce(() => {
+          searchNominatim(inputEl.value).then(suggestions => {
+            showSuggestions(inputEl, suggEl, suggestions, place => selectPlace(place, false, destObj));
+          });
+        }, 300));
+        inputEl.addEventListener('focus', () => inputEl.dispatchEvent(new Event('input')));
+        suggEl.addEventListener('click', e => e.stopPropagation());
+
+        destinations.push(destObj);
         document.getElementById('destContainer').appendChild(box);
         updateCounts();
-      };
+      });
 
-      document.getElementById('optimizeBtn').onclick = optimizeRoute;
+      // Optimize button
+      document.getElementById('optimizeBtn').addEventListener('click', optimizeRoute);
     }
 
-    // Debounce for search (prevents too many calls)
+    // Utility: Debounce for input events
     function debounce(func, wait) {
       let timeout;
-      return function executedFunction(...args) {
-        const later = () => {
-          clearTimeout(timeout);
-          func(...args);
-        };
+      return function (...args) {
         clearTimeout(timeout);
-        timeout = setTimeout(later, wait);
+        timeout = setTimeout(() => func.apply(this, args), wait);
       };
     }
 
     function showError(msg) {
-      const box = document.getElementById('errorBox');
-      box.textContent = msg || '';
-      box.style.display = msg ? 'block' : 'none';
+      const errorBox = document.getElementById('errorBox');
+      errorBox.textContent = msg || '';
+      errorBox.style.display = msg ? 'block' : 'none';
     }
 
     function updateCounts() {
-      const valid = destinations.filter(d => d.place).length;
-      document.getElementById('validCount').textContent = valid;
+      const validCount = destinations.filter(d => d.place).length;
+      document.getElementById('validCount').textContent = validCount;
       document.getElementById('totalCount').textContent = destinations.length;
-      document.getElementById('optimizeBtn').disabled = !origin || valid === 0;
+      document.getElementById('optimizeBtn').disabled = !origin || validCount === 0;
     }
 
     async function searchNominatim(query) {
       if (!query || query.length < 2) return [];
-      const url = `${NOMINATIM_URL}?q=${encodeURIComponent(query)}&format=json&limit=5&addressdetails=1&countrycodes=my,sg,id,th,ph,vn` ; // SE Asia focus
+      const url = `${NOMINATIM_URL}?q=${encodeURIComponent(query)}&format=json&limit=5&addressdetails=1&countrycodes=my,sg,id,th,ph,vn`;
       try {
-        const response = await fetch(url, { headers: { 'User -Agent': 'GreenLogisticsApp/1.0' } });
-        if (!response.ok) throw new Error('Search API failed');
+        const response = await fetch(url, {
+          headers: { 'User -Agent': 'GreenLogisticsApp/1.0' }
+        });
+        if (!response.ok) throw new Error(`API error: ${response.status}`);
         const data = await response.json();
         return data.map(item => ({
           name: item.display_name.split(',')[0],
@@ -203,19 +219,27 @@
           lon: parseFloat(item.lon)
         }));
       } catch (err) {
-        console.error('Search error:', err);
+        console.error('Nominatim search error:', err);
+        showError('Search failed - check connection.');
         return [];
       }
     }
 
-    function showSuggestions(inputEl, suggEl, list, onSelect) {
+    function showSuggestions(inputEl, suggEl, suggestions, onSelect) {
       suggEl.innerHTML = '';
-      if (!list.length) { suggEl.style.display = 'none'; return; }
-      list.forEach(place => {
+      if (suggestions.length === 0) {
+        suggEl.style.display = 'none';
+        return;
+      }
+      suggestions.forEach(place => {
         const div = document.createElement('div');
         div.className = 'suggestion';
         div.textContent = place.fullName;
-        div.onclick = () => { onSelect(place); suggEl.style.display = 'none'; inputEl.blur(); };
+        div.addEventListener('click', () => {
+          onSelect(place);
+          suggEl.style.display = 'none';
+          inputEl.blur();
+        });
         suggEl.appendChild(div);
       });
       suggEl.style.display = 'block';
@@ -228,4 +252,43 @@
         document.getElementById('originSelected').textContent = `Selected: ${place.name}`;
         if (originMarker) map.removeLayer(originMarker);
         originMarker = L.marker([place.lat, place.lon], {
-          icon: L
+          icon: L.icon({
+            iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-red.png',
+            iconSize: [25, 41],
+            iconAnchor: [12, 41]
+          })
+        }).addTo(map).bindPopup(place.fullName);
+        map.setView([place.lat, place.lon], 10);
+      } else if (destObj) {
+        destObj.place = place;
+        destObj.inputEl.value = place.fullName;
+        destObj.selectedEl.textContent = `Selected: ${place.name}`;
+        if (destObj.marker) map.removeLayer(destObj.marker);
+        destObj.marker = L.marker([place.lat, place.lon], {
+          icon: L.icon({
+            iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-green.png',
+            iconSize: [25, 41],
+            iconAnchor: [12, 41]
+          })
+        }).addTo(map).bindPopup(place.fullName);
+        map.setView([place.lat, place.lon], 9);
+      }
+      updateCounts();
+    }
+
+    function clearRoute() {
+      if (routeLayer) {
+        map.removeLayer(routeLayer);
+        routeLayer = null;
+      }
+    }
+
+    async function drawRoute(places) {
+      clearRoute();
+      if (places.length < 2) return;
+      const coordsStr = places.map(p => `${p.lon},${p.lat}`).join(';');
+      const url = `${OSRM_URL}/${coordsStr}?overview=full&geometries=geojson`;
+      try {
+        const response = await fetch(url);
+        if (!response.ok) throw new Error('Route calculation failed');
+        const data =
