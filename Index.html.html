@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Green Logistics Planner - OSM Edition</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
+  <style>
+    body { margin: 0; font-family: system-ui, Arial, sans-serif; }
+    .app { display: flex; height: 100vh; }
+    .left { width: 28%; padding: 16px; border-right: 1px solid #e5e7eb; overflow: auto; background: #fff; }
+    .center { width: 44%; position: relative; background: #f3f4f6; }
+    .right { width: 28%; padding: 16px; border-left: 1px solid #e5e7eb; overflow: auto; background: #fff; }
+    h1 { margin: 0 0 12px; color: #166534; }
+    h2 { margin: 0 0 12px; color: #374151; }
+    label { font-weight: 600; color: #374151; display: block; margin: 12px 0 6px; }
+    .small { font-size: 12px; color: #6b7280; }
+    input[type="text"], input[type="number"], select { width: 100%; padding: 10px; border: 1px solid #d1d5db; border-radius: 8px; box-sizing: border-box; }
+    .btn { width: 100%; padding: 12px; background: #16a34a; color: #fff; border: 0; border-radius: 8px; cursor: pointer; font-weight: 600; margin-top: 8px; }
+    .btn:disabled { background: #9ca3af; cursor: not-allowed; }
+    .btn:hover:not(:disabled) { background: #15803d; }
+    .row { margin-bottom: 12px; }
+    .inline { display: flex; gap: 8px; align-items: center; }
+    .error { padding: 10px; background: #fee2e2; color: #991b1b; border: 1px solid #fecaca; border-radius: 8px; margin-top: 8px; display: none; }
+    .dest-box { background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px; padding: 8px; margin-bottom: 8px; }
+    .remove { padding: 6px 10px; background: #ef4444; color: #fff; border: 0; border-radius: 6px; cursor: pointer; font-size: 12px; }
+    .add { padding: 10px; background: #3b82f6; color: #fff; border: 0; border-radius: 8px; cursor: pointer; width: 100%; margin-top: 8px; }
+    #map { height: 100%; width: 100%; min-height: 500px; }
+    .route { background: #ecfdf5; border: 1px solid #a7f3d0; padding: 8px; border-radius: 8px; margin: 8px 0; }
+    .bar { width: 100%; height: 8px; background: #e5e7eb; border-radius: 999px; overflow: hidden; margin-top: 6px; }
+    .bar-fill { height: 100%; background: #16a34a; transition: width 0.3s; }
+    .loading { text-align: center; padding: 20px; color: #6b7280; }
+    .suggestions { position: absolute; top: 100%; left: 0; right: 0; background: white; border: 1px solid #d1d5db; border-radius: 0 0 8px 8px; max-height: 200px; overflow-y: auto; z-index: 1000; display: none; }
+    .suggestion { padding: 8px; cursor: pointer; border-bottom: 1px solid #f3f4f6; }
+    .suggestion:hover { background: #f3f4f6; }
+    .suggestion:last-child { border-bottom: none; }
+    .input-wrapper { position: relative; }
+    .map-error { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); text-align: center; color: #991b1b; background: #fee2e2; padding: 20px; border-radius: 8px; max-width: 80%; z-index: 1000; }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <div class="left">
+      <h1>Green Logistics Planner</h1>
+      <p class="small">OSM Edition (Hosted on GitHub Pages)</p>
+      <div class="row">
+        <label>Starting Point (Origin)</label>
+        <div class="input-wrapper">
+          <input id="originInput" type="text" placeholder="e.g., Kuala Lumpur" />
+          <div id="originSuggestions" class="suggestions"></div>
+        </div>
+        <div id="originSelected" class="small"></div>
+      </div>
+      <div class="row">
+        <label>Destinations (Up to 5)</label>
+        <div id="destContainer"></div>
+        <button id="addDest" class="add">+ Add Destination</button>
+        <div class="small">Valid: <span id="validCount">0</span>/<span id="totalCount">0</span></div>
+      </div>
+      <div class="row">
+        <label>Vehicle Type</label>
+        <select id="vehicleType">
+          <option value="diesel_truck">Diesel Truck (Higher Emissions)</option>
+          <option value="electric_van">Electric Van (Eco-Friendly)</option>
+        </select>
+      </div>
+      <div class="row">
+        <label>Load Weight (kg)</label>
+        <input id="loadWeight" type="number" value="500" min="0" />
+      </div>
+      <div class="row inline">
+        <input id="roundTrip" type="checkbox" />
+        <label for="roundTrip" style="margin: 0; font-weight: normal;">Round Trip (Return to Origin)</label>
+      </div>
+      <div class="row">
+        <button id="optimizeBtn" class="btn" disabled>Optimize Route</button>
+        <div id="errorBox" class="error"></div>
+      </div>
+    </div>
+    <div class="center">
+      <div id="map"></div>
+      <div id="loadingMap" class="loading">Loading map...</div>
+      <div id="mapError" class="map-error" style="display: none;"></div>
+    </div>
+    <div class="right">
+      <h2>Results</h2>
+      <div id="results" class="loading">Enter details and optimize to see results.</div>
+    </div>
+  </div>
+
+  <script>
+    // Update this URL to your backend (e.g., Render or ngrok)
+    const NGROK_URL = 'https://9b724575c6ea.ngrok-free.app/optimize-route'; // Change to Render URL later
+    const NOMINATIM_URL = 'https://nominatim.openstreetmap.org/search';
+    const OSRM_URL = 'https://router.project-osrm.org/route/v1/driving';
+    let map, routeLayer, origin = null, originMarker = null, destinations = [], maxDests = 5;
+
+    function initMap() {
+      try {
+        if (typeof L === 'undefined') throw new Error('Leaflet not loaded');
+        map = L.map('map').setView([3.139, 101.687], 5);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+          attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+        }).addTo(map);
+        document.getElementById('loadingMap').style.display = 'none';
+        console.log('OSM Map loaded!');
+        wireUI();
+      } catch (err) {
+        console.error('Map init error:', err);
+        document.getElementById('loadingMap').style.display = 'none';
+        document.getElementById('mapError').innerHTML = `Map Error: ${err.message}. Check console.`;
+        document.getElementById('mapError').style.display = 'block';
+      }
+    }
+
+    function wireUI() {
+      // Origin search
+      const originInput = document.getElementById('originInput');
+      const originSugg = document.getElementById('originSuggestions');
+      originInput.oninput = () => searchNominatim(originInput.value).then(list => showSuggestions(originInput, originSugg, list, (place) => selectPlace(place, true)));
+      originInput.onfocus = () => originInput.oninput();
+      originSugg.onclick = (e) => e.stopPropagation();
+
+      // Add destination
+      document.getElementById('addDest').onclick = () => {
+        if (destinations.length >= maxDests) { showError('Max 5 destinations'); return; }
+        const id = destinations.length;
+        const box = document.createElement('div');
+        box.className = 'dest-box';
+        box.innerHTML = `
+          <div class="input-wrapper">
+            <input type="text" placeholder="e.g., Singapore" />
+            <div class="suggestions"></div>
+          </div>
+          <div class="small"></div>
+          <button class="remove">Remove</button>
+        `;
+        const inputEl = box.querySelector('input');
+        const suggEl = box.querySelector('.suggestions');
+        const selectedEl = box.querySelector('.small');
+        const removeBtn = box.querySelector('.remove');
+        removeBtn.onclick = () => { box.remove(); destinations.splice(id, 1); updateCounts(); };
+        inputEl.oninput = () => searchNominatim(inputEl.value).then(list => showSuggestions(inputEl, suggEl, list, (place) => selectPlace(place, false, {id, inputEl, suggEl, selectedEl, place: null, marker: null})));
+        inputEl.onfocus = () => inputEl.oninput();
+        suggEl.onclick = (e) => e.stopPropagation();
+        destinations.push({id, inputEl, suggEl, selectedEl, place: null, marker: null});
+        document.getElementById('destContainer').appendChild(box);
+        updateCounts();
+      };
+
+      // Optimize
+      document.getElementById('optimizeBtn').onclick = optimizeRoute;
+    }
+
+    function showError(msg) {
+      const box = document.getElementById('errorBox');
+      box.textContent = msg || '';
+      box.style.display = msg ? 'block' : 'none';
+    }
+
+    function updateCounts() {
+      const valid = destinations.filter(d => d.place).length;
+      document.getElementById('validCount').textContent = valid;
+      document.getElementById('totalCount').textContent = destinations.length;
+      document.getElementById('optimizeBtn').disabled = !origin || valid === 0;
+    }
+
+    async function searchNominatim(query) {
+      if (!query || query.length < 2) return [];
+      const url = `${NOMINATIM_URL}?q=${encodeURIComponent(query)}&format=json&limit=5&addressdetails=1`;
+      try {
+        const response = await fetch(url);
+        const data = await response.json();
+        return data.map(item => ({
+          name: item.display_name.split(',')[0],
+          fullName: item.display_name,
+          lat: parseFloat(item.lat),
+          lon: parseFloat(item.lon)
+        }));
+      } catch (err) {
+        console.error('Search error:', err);
+        return [];
+      }
+    }
+
+    function showSuggestions(inputEl, suggEl, list, onSelect) {
+      suggEl.innerHTML = '';
+      if (!list.length) { suggEl.style.display = 'none'; return; }
+      list.forEach(place => {
+        const div = document.createElement('div');
+        div.className = 'suggestion';
+        div.textContent = place.fullName;
+        div.onclick = () => { onSelect(place); suggEl.style.display = 'none'; inputEl.blur(); };
+        suggEl.appendChild(div);
+      });
+      suggEl.style.display = 'block';
+    }
+
+    function selectPlace(place, isOrigin = false, destObj = null) {
+      if (isOrigin) {
+        origin = place;
+        document.getElementById('originInput').value = place.fullName;
+        document.getElementById('originSelected').textContent = `Selected: ${place.name}`;
+        if (originMarker) map.removeLayer(originMarker);
+        originMarker = L.marker([place.lat, place.lon], { icon: L.icon({ iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-red.png', iconSize: [25, 41], iconAnchor: [12, 41] }) }).addTo(map).bindPopup(place.fullName);
+        map.setView([place.lat, place.lon], 10);
+      } else if (destObj) {
+        destObj.place = place;
+        destObj.inputEl.value = place.fullName;
+        destObj.selectedEl.textContent = `Selected: ${place.name}`;
+        if (destObj.marker) map.removeLayer(destObj.marker);
+        destObj.marker = L.marker([place.lat, place.lon], { icon: L.icon({ iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-green.png', iconSize: [25, 41], iconAnchor: [12, 41] }) }).addTo(map).bindPopup(place.fullName);
+        map.setView([place.lat, place.lon], 9);
+      }
+      updateCounts();
+    }
+
+    function clearRoute() {
+      if (routeLayer) map.removeLayer(routeLayer);
+      routeLayer = null;
+    }
+
+    async function drawRoute(places) {
+      clearRoute();
+      if (places.length < 2) return;
+      const coordsStr = places.map(p => `${p.lon},${p.lat}`).join(';');
+      const url = `${OSRM_URL}/${coordsStr}?overview=full&geometries=geojson`;
+      try {
+        const response = await fetch(url);
+        const data = await response.json();
+        if (data.routes && data.routes[0]) {
+          const coords = data.routes[0].geometry.coordinates.map(c => [c[1], c[0]]);
+          routeLayer = L.polyline(coords, { color: 'blue', weight: 4 }).addTo(map);
+          map.fitBounds(routeLayer.getBounds().pad(0.1));
+        }
+      } catch (err) {
+        console.error('Route error:', err);
+        showError('Route draw failed');
+      }
+    }
+
+    async function optimizeRoute() {
+      showError('');
+      const vehicleType = document.getElementById('vehicleType').value;
+      const loadWeight = parseFloat(document.getElementById('loadWeight').value) || 0;
+      const roundTrip = document.getElementById('roundTrip').checked;
+      const validDests = destinations.filter(d => d.place).map(d => d.place);
+      if (!origin || validDests.length === 0) { showError('Select origin and destinations
