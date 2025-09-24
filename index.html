@@ -90,18 +90,22 @@
   </div>
 
   <script>
-    const NGROK_URL = 'https://9b724575c6ea.ngrok-free.app/optimize-route'; // Update to backend when ready
+    const NGROK_URL = 'https://9b724575c6ea.ngrok-free.app/optimize-route'; // Replace with your backend URL when ready
     const NOMINATIM_URL = 'https://nominatim.openstreetmap.org/search';
     const OSRM_URL = 'https://router.project-osrm.org/route/v1/driving';
     let map, routeLayer, origin = null, originMarker = null, destinations = [], maxDests = 5;
 
-    // Initialize map on load
-    window.addEventListener('load', initMap);
+    // Initialize map when page loads
+    window.addEventListener('load', function() {
+      initMap();
+    });
 
     function initMap() {
       try {
-        if (typeof L === 'undefined') throw new Error('Leaflet library not loaded. Check internet/CDN.');
-        map = L.map('map').setView([3.139, 101.687], 5); // Center on Malaysia
+        if (typeof L === 'undefined') {
+          throw new Error('Leaflet not loaded - check internet or CDN block.');
+        }
+        map = L.map('map').setView([3.139, 101.687], 5); // Malaysia center
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
           attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
         }).addTo(map);
@@ -109,33 +113,44 @@
         console.log('Map initialized successfully!');
         wireUI();
       } catch (err) {
-        console.error('Map initialization error:', err);
+        console.error('Map init error:', err);
         document.getElementById('loadingMap').style.display = 'none';
-        document.getElementById('mapError').innerHTML = `Error loading map: ${err.message}<br>Open console (F12) for details. Try refreshing or incognito mode.`;
-        document.getElementById('mapError').style.display = 'block';
+        const mapError = document.getElementById('mapError');
+        mapError.innerHTML = `Map failed to load: ${err.message}<br>Check console (F12). Try incognito or different browser.`;
+        mapError.style.display = 'block';
       }
     }
 
     function wireUI() {
-      // Origin search
+      // Origin input
       const originInput = document.getElementById('originInput');
       const originSugg = document.getElementById('originSuggestions');
-      originInput.addEventListener('input', debounce(() => {
+      originInput.addEventListener('input', debounce(function() {
         searchNominatim(originInput.value).then(suggestions => {
-          showSuggestions(originInput, originSugg, suggestions, place => selectPlace(place, true));
+          showSuggestions(originInput, originSugg, suggestions, function(place) {
+            selectPlace(place, true);
+          });
         });
       }, 300));
-      originInput.addEventListener('focus', () => originInput.dispatchEvent(new Event('input')));
-      originSugg.addEventListener('click', e => e.stopPropagation());
-
-      // Hide suggestions on outside click
-      document.addEventListener('click', () => {
-        originSugg.style.display = 'none';
-        destinations.forEach(dest => dest.suggEl.style.display = 'none');
+      originInput.addEventListener('focus', function() {
+        if (originInput.value.length >= 2) {
+          originInput.dispatchEvent(new Event('input'));
+        }
+      });
+      originSugg.addEventListener('click', function(e) {
+        e.stopPropagation();
       });
 
-      // Add destination
-      document.getElementById('addDest').addEventListener('click', () => {
+      // Global click to hide suggestions
+      document.addEventListener('click', function() {
+        originSugg.style.display = 'none';
+        destinations.forEach(function(dest) {
+          dest.suggEl.style.display = 'none';
+        });
+      });
+
+      // Add destination button
+      document.getElementById('addDest').addEventListener('click', function() {
         if (destinations.length >= maxDests) {
           showError('Maximum 5 destinations allowed.');
           return;
@@ -155,22 +170,32 @@
         const suggEl = box.querySelector('.suggestions');
         const selectedEl = box.querySelector('.small');
         const removeBtn = box.querySelector('.remove');
-        const destObj = { id, inputEl, suggEl, selectedEl, place: null, marker: null };
+        const destObj = { id: id, inputEl: inputEl, suggEl: suggEl, selectedEl: selectedEl, place: null, marker: null };
 
-        removeBtn.addEventListener('click', () => {
-          if (destObj.marker) map.removeLayer(destObj.marker);
+        removeBtn.addEventListener('click', function() {
+          if (destObj.marker) {
+            map.removeLayer(destObj.marker);
+          }
           box.remove();
           destinations.splice(id, 1);
           updateCounts();
         });
 
-        inputEl.addEventListener('input', debounce(() => {
+        inputEl.addEventListener('input', debounce(function() {
           searchNominatim(inputEl.value).then(suggestions => {
-            showSuggestions(inputEl, suggEl, suggestions, place => selectPlace(place, false, destObj));
+            showSuggestions(inputEl, suggEl, suggestions, function(place) {
+              selectPlace(place, false, destObj);
+            });
           });
         }, 300));
-        inputEl.addEventListener('focus', () => inputEl.dispatchEvent(new Event('input')));
-        suggEl.addEventListener('click', e => e.stopPropagation());
+        inputEl.addEventListener('focus', function() {
+          if (inputEl.value.length >= 2) {
+            inputEl.dispatchEvent(new Event('input'));
+          }
+        });
+        suggEl.addEventListener('click', function(e) {
+          e.stopPropagation();
+        });
 
         destinations.push(destObj);
         document.getElementById('destContainer').appendChild(box);
@@ -181,12 +206,16 @@
       document.getElementById('optimizeBtn').addEventListener('click', optimizeRoute);
     }
 
-    // Utility: Debounce for input events
+    // Debounce utility
     function debounce(func, wait) {
       let timeout;
-      return function (...args) {
+      return function executedFunction(...args) {
+        const later = () => {
+          clearTimeout(timeout);
+          func(...args);
+        };
         clearTimeout(timeout);
-        timeout = setTimeout(() => func.apply(this, args), wait);
+        timeout = setTimeout(later, wait);
       };
     }
 
@@ -210,7 +239,7 @@
         const response = await fetch(url, {
           headers: { 'User -Agent': 'GreenLogisticsApp/1.0' }
         });
-        if (!response.ok) throw new Error(`API error: ${response.status}`);
+        if (!response.ok) throw new Error(`Search API error: ${response.status}`);
         const data = await response.json();
         return data.map(item => ({
           name: item.display_name.split(',')[0],
@@ -219,8 +248,8 @@
           lon: parseFloat(item.lon)
         }));
       } catch (err) {
-        console.error('Nominatim search error:', err);
-        showError('Search failed - check connection.');
+        console.error('Search error:', err);
+        showError('Location search failed. Check connection.');
         return [];
       }
     }
@@ -250,7 +279,9 @@
         origin = place;
         document.getElementById('originInput').value = place.fullName;
         document.getElementById('originSelected').textContent = `Selected: ${place.name}`;
-        if (originMarker) map.removeLayer(originMarker);
+        if (originMarker) {
+          map.removeLayer(originMarker);
+        }
         originMarker = L.marker([place.lat, place.lon], {
           icon: L.icon({
             iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-red.png',
@@ -263,7 +294,9 @@
         destObj.place = place;
         destObj.inputEl.value = place.fullName;
         destObj.selectedEl.textContent = `Selected: ${place.name}`;
-        if (destObj.marker) map.removeLayer(destObj.marker);
+        if (destObj.marker) {
+          map.removeLayer(destObj.marker);
+        }
         destObj.marker = L.marker([place.lat, place.lon], {
           icon: L.icon({
             iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-green.png',
@@ -271,24 +304,5 @@
             iconAnchor: [12, 41]
           })
         }).addTo(map).bindPopup(place.fullName);
-        map.setView([place.lat, place.lon], 9);
-      }
-      updateCounts();
-    }
-
-    function clearRoute() {
-      if (routeLayer) {
-        map.removeLayer(routeLayer);
-        routeLayer = null;
-      }
-    }
-
-    async function drawRoute(places) {
-      clearRoute();
-      if (places.length < 2) return;
-      const coordsStr = places.map(p => `${p.lon},${p.lat}`).join(';');
-      const url = `${OSRM_URL}/${coordsStr}?overview=full&geometries=geojson`;
-      try {
-        const response = await fetch(url);
-        if (!response.ok) throw new Error('Route calculation failed');
-        const data =
+        if (origin) {
+          map.setView([origin.lat, origin.lon], 8); // Zoom to show
